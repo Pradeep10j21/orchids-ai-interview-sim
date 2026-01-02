@@ -1,0 +1,22 @@
+{
+  "sessionId": "0f385029-3097-4d27-8975-d1df87a60380",
+  "entries": [
+    {
+      "role": "ai",
+      "content": "Hello! Thank you for coming in today. Can you tell me a bit about yourself and your background?",
+      "timestamp": "2026-01-02T09:38:40.978Z"
+    },
+    {
+      "role": "user",
+      "content": "steam Venkateswara College of Engineering",
+      "timestamp": "2026-01-02T09:38:59.692Z"
+    },
+    {
+      "role": "ai",
+      "content": "I see you mentioned St. Venkateswara College of Engineering. Are you a current student, a prospective student, or looking for information about the college’s programs?",
+      "timestamp": "2026-01-02T09:39:02.579Z"
+    }
+  ],
+  "createdAt": "2026-01-02T09:38:40.978Z",
+  "updatedAt": "2026-01-02T09:38:56.854Z"
+}

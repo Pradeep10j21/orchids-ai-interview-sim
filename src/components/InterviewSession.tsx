@@ -174,36 +174,12 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
     }
   };
 
-  const saveTranscriptToBackend = async () => {
-    if (messages.length === 0) return;
-
-    try {
-      await fetch('/api/transcript', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: sessionIdRef.current,
-          messages: messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-            timestamp: m.timestamp.toISOString(),
-          })),
-          startTime: sessionStartTime?.toISOString(),
-          endTime: new Date().toISOString(),
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to save transcript:', error);
-    }
-  };
-
   const endInterview = async () => {
     if (serviceRef.current) {
       await serviceRef.current.disconnect();
       serviceRef.current = null;
     }
 
-    await saveTranscriptToBackend();
     downloadTranscript();
 
     setState((prev) => ({ ...prev, status: 'ended', isRecording: false }));

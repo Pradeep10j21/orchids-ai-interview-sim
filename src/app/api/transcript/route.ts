@@ -12,14 +12,11 @@ interface TranscriptEntry {
 interface SessionTranscript {
   sessionId: string;
   entries: TranscriptEntry[];
-  startTime: string;
-  endTime: string;
   createdAt: string;
   updatedAt: string;
 }
 
 const TRANSCRIPTS_DIR = path.join(process.cwd(), 'transcripts');
-const TRANSCRIPT_FILE = path.join(TRANSCRIPTS_DIR, 'transcript.json');
 
 async function ensureTranscriptsDir() {
   if (!existsSync(TRANSCRIPTS_DIR)) {
@@ -29,28 +26,38 @@ async function ensureTranscriptsDir() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { sessionId, messages, startTime, endTime } = await request.json();
+    const { sessionId, role, content, timestamp } = await request.json();
 
-    if (!sessionId || !messages || !Array.isArray(messages)) {
+    if (!sessionId || !role || !content) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
     await ensureTranscriptsDir();
 
-    const transcript: SessionTranscript = {
-      sessionId,
-      entries: messages.map((m: { role: string; content: string; timestamp: string }) => ({
-        role: m.role as 'user' | 'ai',
-        content: m.content,
-        timestamp: m.timestamp,
-      })),
-      startTime: startTime || new Date().toISOString(),
-      endTime: endTime || new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const filePath = path.join(TRANSCRIPTS_DIR, `${sessionId}.json`);
+    
+    let transcript: SessionTranscript;
+    
+    if (existsSync(filePath)) {
+      const data = await readFile(filePath, 'utf-8');
+      transcript = JSON.parse(data);
+    } else {
+      transcript = {
+        sessionId,
+        entries: [],
+        createdAt: timestamp || new Date().toISOString(),
+        updatedAt: timestamp || new Date().toISOString(),
+      };
+    }
 
-    await writeFile(TRANSCRIPT_FILE, JSON.stringify(transcript, null, 2));
+    transcript.entries.push({
+      role,
+      content,
+      timestamp: timestamp || new Date().toISOString(),
+    });
+    transcript.updatedAt = new Date().toISOString();
+
+    await writeFile(filePath, JSON.stringify(transcript, null, 2));
 
     return NextResponse.json({ success: true, entryCount: transcript.entries.length });
   } catch (error) {
@@ -62,15 +69,24 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url);
+    const sessionId = searchParams.get('sessionId');
+
+    if (!sessionId) {
+      return NextResponse.json({ error: 'Session ID required' }, { status: 400 });
+    }
+
     await ensureTranscriptsDir();
 
-    if (!existsSync(TRANSCRIPT_FILE)) {
+    const filePath = path.join(TRANSCRIPTS_DIR, `${sessionId}.json`);
+
+    if (!existsSync(filePath)) {
       return NextResponse.json({ error: 'Transcript not found' }, { status: 404 });
     }
 
-    const data = await readFile(TRANSCRIPT_FILE, 'utf-8');
+    const data = await readFile(filePath, 'utf-8');
     const transcript = JSON.parse(data);
 
     return NextResponse.json(transcript);

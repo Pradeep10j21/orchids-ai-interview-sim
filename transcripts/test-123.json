@@ -1,0 +1,12 @@
+{
+  "sessionId": "test-123",
+  "entries": [
+    {
+      "role": "user",
+      "content": "Hello this is a test",
+      "timestamp": "2024-01-01T00:00:00Z"
+    }
+  ],
+  "createdAt": "2024-01-01T00:00:00Z",
+  "updatedAt": "2026-01-02T09:23:47.140Z"
+}

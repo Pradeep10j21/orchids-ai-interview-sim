@@ -33,27 +33,16 @@ export default function ErrorReporter({ error, reset }: ReporterProps) {
         timestamp: Date.now(),
       });
 
-    const onReject = (e: PromiseRejectionEvent) => {
-      const message = e.reason?.message ?? String(e.reason);
-      const stack = e.reason?.stack ?? "";
-      
-      if (
-        message === "Failed to fetch" &&
-        (stack.includes("getOriginalStackFrames") || stack.includes("_next/static/chunks"))
-      ) {
-        return;
-      }
-      
+    const onReject = (e: PromiseRejectionEvent) =>
       send({
         type: "ERROR_CAPTURED",
         error: {
-          message,
-          stack,
+          message: e.reason?.message ?? String(e.reason),
+          stack: e.reason?.stack,
           source: "unhandledrejection",
         },
         timestamp: Date.now(),
       });
-    };
 
     const pollOverlay = () => {
       const overlay = document.querySelector("[data-nextjs-dialog-overlay]");
