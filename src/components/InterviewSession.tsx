@@ -12,8 +12,6 @@ import {
   Download,
   Loader2,
   AlertCircle,
-  RefreshCw,
-  X,
 } from 'lucide-react';
 import { VideoFeed } from './VideoFeed';
 import { AIAvatar } from './AIAvatar';
@@ -38,8 +36,6 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
   });
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const [liveTranscript, setLiveTranscript] = useState('');
-  const [isListening, setIsListening] = useState(false);
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
   const [elapsedTime, setElapsedTime] = useState('00:00');
 
@@ -61,9 +57,8 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
   }, [state.status, sessionStartTime]);
 
   const handleConnect = useCallback(() => {
-    setState((prev) => ({ ...prev, status: 'active', isRecording: true, error: null }));
+    setState((prev) => ({ ...prev, status: 'active', isRecording: true }));
     setSessionStartTime(new Date());
-    setIsListening(true);
   }, []);
 
   const handleDisconnect = useCallback(() => {
@@ -73,25 +68,20 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
       }
       return prev;
     });
-    setIsListening(false);
   }, []);
 
   const handleAudioData = useCallback(() => {
     setState((prev) => ({ ...prev, isAISpeaking: true }));
-    setIsListening(false);
     
     if (speakingTimeoutRef.current) {
       clearTimeout(speakingTimeoutRef.current);
     }
     speakingTimeoutRef.current = setTimeout(() => {
       setState((prev) => ({ ...prev, isAISpeaking: false }));
-      setIsListening(true);
     }, 500);
   }, []);
 
   const handleTextResponse = useCallback((text: string) => {
-    setState((prev) => ({ ...prev, error: null }));
-    
     setMessages((prev) => [
       ...prev,
       {
@@ -109,25 +99,6 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
     }
   }, []);
 
-  const handleUserTranscript = useCallback((text: string, isFinal: boolean) => {
-    if (isFinal) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: generateUUID(),
-          role: 'user',
-          content: text,
-          timestamp: new Date(),
-        },
-      ]);
-      setLiveTranscript('');
-      setIsListening(false);
-    } else {
-      setLiveTranscript(text);
-      setIsListening(true);
-    }
-  }, []);
-
   const handleError = useCallback((error: Error) => {
     console.error('Interview error:', error);
     setState((prev) => ({ ...prev, error: error.message }));
@@ -135,17 +106,6 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
 
   const handleInterrupted = useCallback(() => {
     setState((prev) => ({ ...prev, isAISpeaking: false }));
-  }, []);
-
-  const clearError = useCallback(() => {
-    setState((prev) => ({ ...prev, error: null }));
-  }, []);
-
-  const retryAI = useCallback(() => {
-    if (serviceRef.current) {
-      setState((prev) => ({ ...prev, error: null }));
-      serviceRef.current.retryLastResponse();
-    }
   }, []);
 
   const startInterview = async () => {
@@ -161,7 +121,6 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
         onTextResponse: handleTextResponse,
         onError: handleError,
         onInterrupted: handleInterrupted,
-        onUserTranscript: handleUserTranscript,
       });
 
       await serviceRef.current.startMicrophone();
@@ -194,8 +153,6 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
   };
 
   const downloadTranscript = () => {
-    if (messages.length === 0) return;
-    
     const history: ConversationHistory = {
       sessionId: sessionIdRef.current,
       startTime: sessionStartTime?.toISOString() || new Date().toISOString(),
@@ -244,15 +201,6 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
                 </div>
                 <div className="w-px h-4 bg-[#39634E]/20" />
                 <span className="text-sm font-mono text-[#5a7d67]">{elapsedTime}</span>
-                {isListening && (
-                  <>
-                    <div className="w-px h-4 bg-[#39634E]/20" />
-                    <div className="flex items-center gap-1.5">
-                      <Mic className="w-3.5 h-3.5 text-[#39634E] animate-pulse" />
-                      <span className="text-xs text-[#39634E]">Listening</span>
-                    </div>
-                  </>
-                )}
               </div>
             )}
 
@@ -271,28 +219,9 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
 
       <main className="max-w-[1800px] mx-auto p-6">
         {state.error && (
-          <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-              <p className="text-sm text-red-700">{state.error}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              {state.status === 'active' && (
-                <button
-                  onClick={retryAI}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-100 text-red-700 text-sm font-medium hover:bg-red-200 transition-colors"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  Retry
-                </button>
-              )}
-              <button
-                onClick={clearError}
-                className="p-1.5 rounded-lg hover:bg-red-100 transition-colors"
-              >
-                <X className="w-4 h-4 text-red-500" />
-              </button>
-            </div>
+          <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+            <p className="text-sm text-red-700">{state.error}</p>
           </div>
         )}
 
@@ -341,8 +270,6 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
                     className={`w-14 h-14 rounded-xl flex items-center justify-center transition-all duration-200 ${
                       state.isMuted
                         ? 'bg-red-500 text-white hover:bg-red-600'
-                        : isListening
-                        ? 'bg-[#39634E] text-white ring-4 ring-[#39634E]/30 animate-pulse'
                         : 'bg-[#e8efe9] text-[#39634E] hover:bg-[#d4e4d9]'
                     }`}
                   >
@@ -358,16 +285,6 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
                     }`}
                   >
                     {state.isCameraOff ? <CameraOff className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
-                  </button>
-
-                  <div className="w-px h-10 bg-[#d4e4d9]" />
-
-                  <button
-                    onClick={retryAI}
-                    className="w-14 h-14 rounded-xl bg-[#e8efe9] text-[#39634E] hover:bg-[#d4e4d9] flex items-center justify-center transition-all duration-200"
-                    title="Retry AI Response"
-                  >
-                    <RefreshCw className="w-6 h-6" />
                   </button>
 
                   <div className="w-px h-10 bg-[#d4e4d9]" />
@@ -397,7 +314,6 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
                           error: null,
                         });
                         setMessages([]);
-                        setLiveTranscript('');
                         sessionIdRef.current = generateUUID();
                       }}
                       className="px-6 py-3 rounded-xl bg-[#39634E] text-white font-medium hover:bg-[#2d5040] transition-colors"
@@ -419,11 +335,7 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
           </div>
 
           <div className="h-full min-h-[400px]">
-            <ChatPanel 
-              messages={messages} 
-              liveTranscript={liveTranscript}
-              isListening={isListening}
-            />
+            <ChatPanel messages={messages} />
           </div>
         </div>
       </main>

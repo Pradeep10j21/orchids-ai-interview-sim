@@ -35,5 +35,4 @@ export interface LiveSessionCallbacks {
   onTextResponse: (text: string) => void;
   onError: (error: Error) => void;
   onInterrupted: () => void;
-  onUserTranscript: (text: string, isFinal: boolean) => void;
 }
