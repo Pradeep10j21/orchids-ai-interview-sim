@@ -1,0 +1,19 @@
+{
+  "sessionId": "test-session",
+  "entries": [
+    {
+      "role": "ai",
+      "content": "Hello!",
+      "timestamp": "2025-01-01T10:00:00Z"
+    },
+    {
+      "role": "user",
+      "content": "Hi there",
+      "timestamp": "2025-01-01T10:01:00Z"
+    }
+  ],
+  "startTime": "2025-01-01T10:00:00Z",
+  "endTime": "2025-01-01T10:02:00Z",
+  "createdAt": "2026-01-02T10:08:45.196Z",
+  "updatedAt": "2026-01-02T10:08:45.196Z"
+}
