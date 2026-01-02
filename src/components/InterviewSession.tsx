@@ -21,10 +21,11 @@ import type { Message, InterviewState, ConversationHistory } from '@/types/inter
 import { generateUUID } from '@/utils/audioUtils';
 
 interface InterviewSessionProps {
+  apiKey: string;
   onReset?: () => void;
 }
 
-export function InterviewSession({ onReset }: InterviewSessionProps) {
+export function InterviewSession({ apiKey, onReset }: InterviewSessionProps) {
   const [state, setState] = useState<InterviewState>({
     status: 'idle',
     isRecording: false,
@@ -41,6 +42,7 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
 
   const serviceRef = useRef<LiveInterviewService | null>(null);
   const sessionIdRef = useRef<string>(generateUUID());
+  const currentAIMessageRef = useRef<string>('');
   const speakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -82,20 +84,34 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
   }, []);
 
   const handleTextResponse = useCallback((text: string) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: generateUUID(),
-        role: 'ai',
-        content: text,
-        timestamp: new Date(),
-      },
-    ]);
+    currentAIMessageRef.current += text;
 
-    const sentences = text.split(/[.?!]+/);
-    const questionSentence = sentences.find(s => s.includes('?'));
-    if (questionSentence) {
-      setState((prev) => ({ ...prev, currentQuestion: questionSentence.trim() + '?' }));
+    setMessages((prev) => {
+      const lastMessage = prev[prev.length - 1];
+      if (lastMessage && lastMessage.role === 'ai') {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          ...lastMessage,
+          content: currentAIMessageRef.current,
+        };
+        return updated;
+      }
+
+      return [
+        ...prev,
+        {
+          id: generateUUID(),
+          role: 'ai',
+          content: currentAIMessageRef.current,
+          timestamp: new Date(),
+        },
+      ];
+    });
+
+    const sentences = currentAIMessageRef.current.split(/[.?!]+/);
+    const lastSentence = sentences[sentences.length - 2] || sentences[0];
+    if (lastSentence && lastSentence.includes('?')) {
+      setState((prev) => ({ ...prev, currentQuestion: lastSentence.trim() + '?' }));
     }
   }, []);
 
@@ -105,20 +121,28 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
   }, []);
 
   const handleInterrupted = useCallback(() => {
+    currentAIMessageRef.current = '';
     setState((prev) => ({ ...prev, isAISpeaking: false }));
   }, []);
 
   const startInterview = async () => {
+    if (!apiKey) {
+      setState((prev) => ({ ...prev, error: 'API key is required' }));
+      return;
+    }
+
     setState((prev) => ({ ...prev, status: 'connecting', error: null }));
 
     try {
-      serviceRef.current = new LiveInterviewService();
+      serviceRef.current = new LiveInterviewService(apiKey);
 
       await serviceRef.current.connect({
         onConnect: handleConnect,
         onDisconnect: handleDisconnect,
         onAudioData: handleAudioData,
-        onTextResponse: handleTextResponse,
+        onTextResponse: (text) => {
+          handleTextResponse(text);
+        },
         onError: handleError,
         onInterrupted: handleInterrupted,
       });
@@ -315,6 +339,7 @@ export function InterviewSession({ onReset }: InterviewSessionProps) {
                         });
                         setMessages([]);
                         sessionIdRef.current = generateUUID();
+                        currentAIMessageRef.current = '';
                       }}
                       className="px-6 py-3 rounded-xl bg-[#39634E] text-white font-medium hover:bg-[#2d5040] transition-colors"
                     >

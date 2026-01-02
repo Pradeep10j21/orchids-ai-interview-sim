@@ -1,241 +1,345 @@
 import type { LiveSessionCallbacks } from '@/types/interview';
+import {
+  float32ToInt16,
+  arrayBufferToBase64,
+  base64ToArrayBuffer,
+  resampleAudio,
+} from '@/utils/audioUtils';
 
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
+const SYSTEM_INSTRUCTION = `You are a Professional Technical Recruiter conducting a technical interview. Your role is to interview the candidate professionally and assess their skills.
 
-interface SpeechRecognitionEvent {
-  resultIndex: number;
-  results: SpeechRecognitionResultList;
-}
+Interview Flow:
+1. Start with "Tell me about yourself."
+2. After their introduction, ask follow-up questions about projects they mentioned.
+3. Then move to technical topics: OOP concepts, DBMS, Operating Systems, Data Structures & Algorithms, React.js, and Express.js.
 
-interface SpeechRecognitionErrorEvent {
-  error: string;
-}
+Rules:
+- Ask ONE question at a time. Wait for the candidate to finish before asking the next question.
+- Keep your responses concise and professional. Do not lecture or teach - just interview.
+- Be encouraging but maintain professional distance.
+- If the candidate struggles, you may provide a small hint but move on if they cannot answer.
+- Acknowledge their answers briefly before moving to the next question.
 
-interface SpeechRecognitionResultList {
-  length: number;
-  [index: number]: SpeechRecognitionResult;
-}
-
-interface SpeechRecognitionResult {
-  isFinal: boolean;
-  [index: number]: SpeechRecognitionAlternative;
-}
-
-interface SpeechRecognitionAlternative {
-  transcript: string;
-  confidence: number;
-}
-
-interface ISpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-  start(): void;
-  stop(): void;
-}
-
-type SpeechRecognitionConstructor = new () => ISpeechRecognition;
+Remember: You are interviewing them, not teaching them. Keep the conversation flowing naturally like a real interview.`;
 
 export class LiveInterviewService {
+  private ws: WebSocket | null = null;
   private callbacks: LiveSessionCallbacks | null = null;
+  private audioContext: AudioContext | null = null;
+  private mediaStream: MediaStream | null = null;
+  private scriptProcessor: ScriptProcessorNode | null = null;
+  private sourceNode: MediaStreamAudioSourceNode | null = null;
+  private playbackContext: AudioContext | null = null;
+  private audioQueue: AudioBuffer[] = [];
+  private isPlaying = false;
   private isConnected = false;
-  private recognition: ISpeechRecognition | null = null;
-  private synthesis: SpeechSynthesis | null = null;
-  private conversationHistory: ChatMessage[] = [];
-  private isProcessing = false;
-  private isSpeaking = false;
-  private currentUtterance: SpeechSynthesisUtterance | null = null;
+  private apiKey: string;
+  private initialPromptSent = false;
 
-  constructor() {
-    if (typeof window !== 'undefined') {
-      this.synthesis = window.speechSynthesis;
+  constructor(apiKey: string) {
+    if (!apiKey) {
+      throw new Error('API key is required');
     }
+    this.apiKey = apiKey;
   }
 
   async connect(callbacks: LiveSessionCallbacks): Promise<void> {
     this.callbacks = callbacks;
-    this.isConnected = true;
-    callbacks.onConnect();
-
-    await this.sendInitialGreeting();
-  }
-
-  private async sendInitialGreeting(): Promise<void> {
-    const initialMessage = {
-      role: 'user' as const,
-      content: 'Start the interview by greeting the candidate and asking them to tell you about themselves.',
-    };
-    
-    await this.getAIResponse([initialMessage], false);
-  }
-
-  private async getAIResponse(messages: ChatMessage[], addToHistory: boolean = true): Promise<void> {
-    if (this.isProcessing) return;
-    this.isProcessing = true;
 
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages }),
-      });
+      const url = `wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17`;
+      
+      this.ws = new WebSocket(url, [
+        'realtime',
+        `openai-insecure-api-key.${this.apiKey}`,
+        'openai-beta.realtime-v1',
+      ]);
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to get response');
-      }
+      this.ws.onopen = () => {
+        console.log('WebSocket opened');
+        this.isConnected = true;
+        this.sendSessionUpdate();
+      };
 
-      const data = await response.json();
-      const aiMessage = data.message;
+      this.ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        this.handleServerMessage(data);
+      };
 
-      if (addToHistory) {
-        this.conversationHistory.push({ role: 'assistant', content: aiMessage });
-      } else {
-        this.conversationHistory = [{ role: 'assistant', content: aiMessage }];
-      }
+      this.ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        this.callbacks?.onError(new Error('WebSocket connection error'));
+      };
 
-      this.callbacks?.onTextResponse(aiMessage);
-      await this.speakText(aiMessage);
+      this.ws.onclose = (e) => {
+        console.log('WebSocket closed:', e.code, e.reason);
+        this.isConnected = false;
+        this.callbacks?.onDisconnect();
+      };
+
+      this.playbackContext = new AudioContext({ sampleRate: 24000 });
     } catch (error) {
-      console.error('AI response error:', error);
-      this.callbacks?.onError(error instanceof Error ? error : new Error('Unknown error'));
-    } finally {
-      this.isProcessing = false;
+      console.error('Failed to connect:', error);
+      throw error;
     }
   }
 
-  private speakText(text: string): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.synthesis) {
-        resolve();
-        return;
+  private sendSessionUpdate(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    const sessionUpdate = {
+      type: 'session.update',
+      session: {
+        modalities: ['text', 'audio'],
+        instructions: SYSTEM_INSTRUCTION,
+        voice: 'alloy',
+        input_audio_format: 'pcm16',
+        output_audio_format: 'pcm16',
+        input_audio_transcription: {
+          model: 'whisper-1',
+        },
+        turn_detection: {
+          type: 'server_vad',
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 500,
+        },
+      },
+    };
+
+    this.ws.send(JSON.stringify(sessionUpdate));
+  }
+
+  private sendInitialPrompt(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    console.log('Sending initial prompt...');
+
+    const conversationItem = {
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: 'Start the interview by greeting the candidate and asking them to tell you about themselves.',
+          },
+        ],
+      },
+    };
+
+    this.ws.send(JSON.stringify(conversationItem));
+    console.log('Conversation item sent');
+
+    const responseCreate = {
+      type: 'response.create',
+      response: {
+        modalities: ['text', 'audio'],
+      },
+    };
+
+    this.ws.send(JSON.stringify(responseCreate));
+    console.log('Response create sent');
+  }
+
+  private handleServerMessage(message: Record<string, unknown>): void {
+    const type = message.type as string;
+    console.log('Received message:', type, message);
+
+    switch (type) {
+      case 'session.created':
+        console.log('Session created');
+        this.callbacks?.onConnect();
+        break;
+
+      case 'session.updated':
+        console.log('Session updated');
+        if (!this.initialPromptSent) {
+          this.initialPromptSent = true;
+          this.sendInitialPrompt();
+        }
+        break;
+
+      case 'response.audio.delta':
+        if (message.delta) {
+          const audioData = base64ToArrayBuffer(message.delta as string);
+          this.callbacks?.onAudioData(audioData);
+          this.queueAudioForPlayback(audioData);
+        }
+        break;
+
+      case 'response.audio_transcript.delta':
+        if (message.delta) {
+          this.callbacks?.onTextResponse(message.delta as string);
+        }
+        break;
+
+      case 'response.text.delta':
+        if (message.delta) {
+          this.callbacks?.onTextResponse(message.delta as string);
+        }
+        break;
+
+      case 'input_audio_buffer.speech_started':
+        this.stopAudioPlayback();
+        this.callbacks?.onInterrupted();
+        break;
+
+      case 'error':
+        console.error('OpenAI error:', message.error);
+        const errorObj = message.error as { message?: string } | undefined;
+        this.callbacks?.onError(new Error(errorObj?.message || 'Unknown error'));
+        break;
+
+      case 'response.done':
+        console.log('Response complete');
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  private async queueAudioForPlayback(audioData: ArrayBuffer): Promise<void> {
+    if (!this.playbackContext) return;
+
+    try {
+      const int16Array = new Int16Array(audioData);
+      const float32Array = new Float32Array(int16Array.length);
+      for (let i = 0; i < int16Array.length; i++) {
+        float32Array[i] = int16Array[i] / 32768;
       }
 
-      this.synthesis.cancel();
-      this.isSpeaking = true;
+      const audioBuffer = this.playbackContext.createBuffer(
+        1,
+        float32Array.length,
+        24000
+      );
+      audioBuffer.copyToChannel(float32Array, 0);
 
-      const utterance = new SpeechSynthesisUtterance(text);
-      this.currentUtterance = utterance;
-      
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
+      this.audioQueue.push(audioBuffer);
 
-      const voices = this.synthesis.getVoices();
-      const preferredVoice = voices.find(
-        (v) => v.lang.startsWith('en') && v.name.toLowerCase().includes('female')
-      ) || voices.find((v) => v.lang.startsWith('en')) || voices[0];
-      
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
+      if (!this.isPlaying) {
+        this.playNextAudio();
       }
+    } catch (error) {
+      console.error('Failed to queue audio:', error);
+    }
+  }
 
-      utterance.onstart = () => {
-        this.callbacks?.onAudioData(new ArrayBuffer(0));
-      };
+  private playNextAudio(): void {
+    if (!this.playbackContext || this.audioQueue.length === 0) {
+      this.isPlaying = false;
+      return;
+    }
 
-      utterance.onend = () => {
-        this.isSpeaking = false;
-        this.currentUtterance = null;
-        resolve();
-      };
+    this.isPlaying = true;
+    const audioBuffer = this.audioQueue.shift();
 
-      utterance.onerror = () => {
-        this.isSpeaking = false;
-        this.currentUtterance = null;
-        resolve();
-      };
+    if (!audioBuffer) {
+      this.isPlaying = false;
+      return;
+    }
 
-      this.synthesis.speak(utterance);
-    });
+    const source = this.playbackContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.playbackContext.destination);
+
+    source.onended = () => {
+      this.playNextAudio();
+    };
+
+    source.start();
+  }
+
+  private stopAudioPlayback(): void {
+    this.audioQueue = [];
+    this.isPlaying = false;
   }
 
   async startMicrophone(): Promise<void> {
-    const win = window as unknown as { 
-      SpeechRecognition?: SpeechRecognitionConstructor;
-      webkitSpeechRecognition?: SpeechRecognitionConstructor;
-    };
-    
-    const SpeechRecognitionAPI = win.SpeechRecognition || win.webkitSpeechRecognition;
+    try {
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 24000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
 
-    if (!SpeechRecognitionAPI) {
-      throw new Error('Speech recognition not supported in this browser. Please use Chrome or Edge.');
+      this.audioContext = new AudioContext({ sampleRate: 24000 });
+      this.sourceNode = this.audioContext.createMediaStreamSource(
+        this.mediaStream
+      );
+      this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+      this.scriptProcessor.onaudioprocess = (event) => {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+        const inputData = event.inputBuffer.getChannelData(0);
+        const resampledData = resampleAudio(
+          inputData,
+          this.audioContext?.sampleRate || 44100,
+          24000
+        );
+        const int16Data = float32ToInt16(resampledData);
+        const base64Audio = arrayBufferToBase64(int16Data.buffer as ArrayBuffer);
+
+        const audioAppend = {
+          type: 'input_audio_buffer.append',
+          audio: base64Audio,
+        };
+
+        this.ws.send(JSON.stringify(audioAppend));
+      };
+
+      this.sourceNode.connect(this.scriptProcessor);
+      this.scriptProcessor.connect(this.audioContext.destination);
+    } catch (error) {
+      console.error('Failed to start microphone:', error);
+      throw error;
     }
-
-    this.recognition = new SpeechRecognitionAPI();
-    this.recognition.continuous = true;
-    this.recognition.interimResults = true;
-    this.recognition.lang = 'en-US';
-
-    let finalTranscript = '';
-
-    this.recognition.onresult = (event: SpeechRecognitionEvent) => {
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript + ' ';
-        }
-      }
-
-      if (finalTranscript.trim() && !this.isProcessing && !this.isSpeaking) {
-        const userMessage = finalTranscript.trim();
-        finalTranscript = '';
-        
-        this.stopSpeaking();
-        this.callbacks?.onInterrupted();
-        
-        this.conversationHistory.push({ role: 'user', content: userMessage });
-        this.getAIResponse(this.conversationHistory);
-      }
-    };
-
-    this.recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (event.error !== 'no-speech' && event.error !== 'aborted') {
-        console.error('Speech recognition error:', event.error);
-        this.callbacks?.onError(new Error(`Speech recognition error: ${event.error}`));
-      }
-    };
-
-    this.recognition.onend = () => {
-      if (this.isConnected && this.recognition) {
-        try {
-          this.recognition.start();
-        } catch (e) {
-          console.log('Recognition restart failed:', e);
-        }
-      }
-    };
-
-    this.recognition.start();
-  }
-
-  private stopSpeaking(): void {
-    if (this.synthesis) {
-      this.synthesis.cancel();
-    }
-    this.isSpeaking = false;
-    this.currentUtterance = null;
   }
 
   stopMicrophone(): void {
-    if (this.recognition) {
-      this.recognition.stop();
-      this.recognition = null;
+    if (this.scriptProcessor) {
+      this.scriptProcessor.disconnect();
+      this.scriptProcessor = null;
+    }
+
+    if (this.sourceNode) {
+      this.sourceNode.disconnect();
+      this.sourceNode = null;
+    }
+
+    if (this.audioContext) {
+      this.audioContext.close();
+      this.audioContext = null;
+    }
+
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach((track) => track.stop());
+      this.mediaStream = null;
     }
   }
 
   async disconnect(): Promise<void> {
     this.stopMicrophone();
-    this.stopSpeaking();
+    this.stopAudioPlayback();
+
+    if (this.playbackContext) {
+      await this.playbackContext.close();
+      this.playbackContext = null;
+    }
+
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+
     this.isConnected = false;
-    this.conversationHistory = [];
-    this.callbacks?.onDisconnect();
   }
 
   isSessionConnected(): boolean {

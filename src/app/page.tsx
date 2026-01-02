@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { InterviewSession } from '@/components/InterviewSession';
-import { ArrowRight, Shield, Sparkles, Mic, Video } from 'lucide-react';
+import { Key, ArrowRight, Shield, Sparkles, Mic, Video } from 'lucide-react';
 
 export default function Home() {
+  const [apiKey, setApiKey] = useState('');
   const [isStarted, setIsStarted] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -20,8 +21,8 @@ export default function Home() {
     );
   }
 
-  if (isStarted) {
-    return <InterviewSession onReset={() => setIsStarted(false)} />;
+  if (isStarted && apiKey) {
+    return <InterviewSession apiKey={apiKey} onReset={() => setIsStarted(false)} />;
   }
 
   return (
@@ -41,15 +42,37 @@ export default function Home() {
 
         <div className="bg-white rounded-3xl shadow-xl border border-[#d4e4d9] p-8">
           <div className="space-y-6">
-            <div className="text-center">
-              <p className="text-[#5a7d67] mb-6">
-                Click below to start your mock technical interview. The AI will ask you questions and provide feedback.
+            <div>
+              <label className="block text-sm font-semibold text-[#1e3a2c] mb-2">
+                OpenAI API Key
+              </label>
+              <div className="relative">
+                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#5a7d67]" />
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Enter your OpenAI API key"
+                  className="w-full pl-12 pr-4 py-4 rounded-xl border border-[#d4e4d9] bg-[#f8fbf9] text-[#1e3a2c] placeholder:text-[#8ca898] focus:outline-none focus:ring-2 focus:ring-[#39634E] focus:border-transparent transition-all"
+                />
+              </div>
+              <p className="mt-2 text-xs text-[#8ca898]">
+                Get your API key from{' '}
+                <a
+                  href="https://platform.openai.com/api-keys"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#39634E] hover:underline"
+                >
+                  OpenAI Platform
+                </a>
               </p>
             </div>
 
             <button
               onClick={() => setIsStarted(true)}
-              className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-xl bg-gradient-to-r from-[#39634E] to-[#2d5040] text-white font-semibold text-lg shadow-lg shadow-[#39634E]/30 hover:shadow-xl hover:shadow-[#39634E]/40 hover:scale-[1.01] transition-all duration-300"
+              disabled={!apiKey.trim()}
+              className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-xl bg-gradient-to-r from-[#39634E] to-[#2d5040] text-white font-semibold text-lg shadow-lg shadow-[#39634E]/30 hover:shadow-xl hover:shadow-[#39634E]/40 hover:scale-[1.01] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:shadow-lg transition-all duration-300"
             >
               Start Interview
               <ArrowRight className="w-5 h-5" />
@@ -74,14 +97,14 @@ export default function Home() {
                 <div className="w-10 h-10 rounded-lg bg-[#e8efe9] flex items-center justify-center">
                   <Shield className="w-5 h-5 text-[#39634E]" />
                 </div>
-                <span className="text-xs text-[#5a7d67] text-center">Free to Use</span>
+                <span className="text-xs text-[#5a7d67] text-center">Secure</span>
               </div>
             </div>
           </div>
         </div>
 
         <p className="text-center text-xs text-[#8ca898] mt-6">
-          Powered by Qwen LLM with browser speech synthesis
+          Your API key is used client-side only and never stored on any server
         </p>
       </div>
     </div>
